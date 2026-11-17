@@ -2,10 +2,10 @@
 """
 Card Verifizier Checker
 - Der Scanner liest einen Link (QR-Code); darin steht ein Code wie H98114CK-YEN-6FX
-- Das Kartenleser-Programm zeigt denselben Code neben "WTP-Nummer 64 bit:" an
+- Das Kartenleser-Programm (Fenster wird automatisch nach Inhalt gefunden) zeigt denselben Code neben "WTP-Nummer 64 bit:" an
 - Dieses Tool vergleicht beide: gruen = Treffer, rot = kein Treffer
 - Unter Windows werden Scans GLOBAL empfangen (auch wenn dieses Fenster nicht aktiv ist)
-- Alle Scans erscheinen in einer Liste und werden in scan_liste.txt (und hex_log.rtf) gespeichert
+- Alle Scans erscheinen in einer Liste und werden in scan_liste.txt gespeichert (Link + RICHTIG/FALSCH)
 Start:  python hex_checker.py
 """
 import os
@@ -18,7 +18,9 @@ import tkinter as tk
 from datetime import datetime
 
 IS_WIN = sys.platform == "win32"
-WINDOW_TITLE_DEFAULT = "Card Verifizier"
+WINDOW_TITLE_DEFAULT = ""   # leer = Fenster automatisch nach Inhalt suchen
+ANCHOR = "WTP-Nummer"       # bevorzugtes Fenster: enthaelt diesen Text
+FOUND = {"title": ""}
 
 # Ein Scanner "tippt" sehr schnell. Zeichen mit weniger als MAX_GAP Sekunden
 # Abstand gelten als ein Scan, der mit Enter endet.
@@ -30,7 +32,7 @@ MIN_LEN = 10
 #   (Name, Regex-Muster)
 # ============================================================
 A = "[A-Za-z0-9]"
-NB = "(?<![A-Za-z0-9-])"
+NB = "(?<![A-Za-z0-9])"
 NA = "(?![A-Za-z0-9-])"
 PATTERNS = [
     ("WTP-64bit", re.compile(NB + A + "{8}-" + A + "{3}-" + A + "{3}" + NA)),
@@ -39,7 +41,6 @@ PATTERNS = [
 ]
 
 BASE_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
-LOG_PATH = os.path.join(BASE_DIR, "hex_log.rtf")
 TXT_PATH = os.path.join(BASE_DIR, "scan_liste.txt")
 
 SCAN_Q = queue.Queue()
@@ -80,28 +81,92 @@ if IS_WIN:
         user32.EnumWindows(WNDENUMPROC(cb), 0)
         return found
 
-    def read_window_text(title_part):
-        texts = []
-        for hwnd in find_windows(title_part):
-            texts.append(_text_of(hwnd))
+    def _title_of(hwnd):
+        n = user32.GetWindowTextLengthW(hwnd)
+        b = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, b, n + 1)
+        return b.value
 
-            def cb(child, _):
-                t = _text_of(child)
-                if t:
-                    texts.append(t)
-                return True
+    def _all_text(hwnd):
+        texts = [_text_of(hwnd)]
 
-            user32.EnumChildWindows(hwnd, WNDENUMPROC(cb), 0)
-            try:  # optional fuer moderne Programme:  pip install pywinauto
-                from pywinauto import Desktop
-                w = Desktop(backend="uia").window(handle=hwnd)
-                for c in w.descendants():
-                    t = c.window_text()
-                    if t:
-                        texts.append(t)
-            except Exception:
-                pass
+        def cb(child, _):
+            t = _text_of(child)
+            if t:
+                texts.append(t)
+            return True
+
+        user32.EnumChildWindows(hwnd, WNDENUMPROC(cb), 0)
         return "\n".join(texts)
+
+    def _uia_text(hwnd):
+        try:  # optional fuer moderne Programme:  pip install pywinauto
+            from pywinauto import Desktop
+            w = Desktop(backend="uia").window(handle=hwnd)
+            return "\n".join(c.window_text() for c in w.descendants()
+                             if c.window_text())
+        except Exception:
+            return ""
+
+    def _top_windows():
+        wins = []
+        my_pid = kernel32.GetCurrentProcessId()
+
+        def cb(hwnd, _):
+            if user32.IsWindowVisible(hwnd) and \
+                    user32.GetWindowTextLengthW(hwnd):
+                pid = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value != my_pid:      # eigenes Fenster ueberspringen
+                    wins.append(hwnd)
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(cb), 0)
+        return wins
+
+    _SEARCH = {"hwnd": None, "t": 0.0}
+
+    def read_window_text(title_part, force=False):
+        """Mit Titel: Fenster nach Titel. Ohne Titel: nach Inhalt suchen."""
+        title_part = (title_part or "").strip()
+        if title_part:
+            texts = []
+            for hwnd in find_windows(title_part):
+                t = _all_text(hwnd)
+                if not find_codes(t):
+                    t += "\n" + _uia_text(hwnd)
+                texts.append(t)
+                FOUND["title"] = _title_of(hwnd)
+            return "\n".join(texts)
+        # --- automatische Suche nach Inhalt ---
+        h = _SEARCH["hwnd"]
+        if h and user32.IsWindow(h) and user32.IsWindowVisible(h):
+            t = _all_text(h)
+            if find_codes(t):
+                return t
+        now = time.time()
+        if not force and now - _SEARCH["t"] < 3.0:
+            return ""
+        _SEARCH["t"] = now
+        best = first = None
+        for hwnd in _top_windows():
+            t = _all_text(hwnd)
+            if find_codes(t):
+                if ANCHOR.lower() in t.lower():
+                    best = (hwnd, t)
+                    break
+                if first is None:
+                    first = (hwnd, t)
+            if time.time() - now > 1.5:
+                break
+        pick = best or first
+        if pick:
+            _SEARCH["hwnd"] = pick[0]
+            FOUND["title"] = _title_of(pick[0])
+            return pick[1]
+        _SEARCH["hwnd"] = None
+        FOUND["title"] = ""
+        return ""
 
     # ---- globaler Tastatur-Hook: empfaengt Scanner-Eingaben immer ----
     _HOOK_REFS = []
@@ -200,7 +265,7 @@ if IS_WIN:
 else:
     SIMULATED = {"text": ""}
 
-    def read_window_text(title_part):  # Testmodus am Mac
+    def read_window_text(title_part, force=False):  # Testmodus am Mac
         return SIMULATED["text"]
 
     def start_global_hook(q):
@@ -217,45 +282,17 @@ def find_codes(text):
     return out
 
 
-# ---------------- Protokoll: RTF (farbig) + TXT (Liste) ----------------
-def _esc(s):
-    out = []
-    for ch in s:
-        o = ord(ch)
-        if ch in "\\{}":
-            out.append("\\" + ch)
-        elif o > 127:
-            out.append("\\u%d?" % (o if o < 32768 else o - 65536))
-        else:
-            out.append(ch)
-    return "".join(out)
+# ---------------- Protokoll: eine Textdatei ----------------
+WRITE_TIMESTAMP = False   # True = vor jede Zeile Datum/Uhrzeit schreiben
 
 
-RTF_HEADER = ("{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0 Consolas;}}"
-              "{\\colortbl;\\red0\\green150\\blue0;\\red210\\green0\\blue0;}"
-              "\\f0\\fs20\n")
-
-
-def write_log(ts, ok, scanned, screen, note=""):
-    color, status = (1, "PASS") if ok else (2, "FAIL")
-    line = "%s | \\cf%d\\b %s\\b0\\cf0  | scan=%s | screen=%s %s\\line\n" % (
-        ts, color, status, _esc(scanned or "-"), _esc(screen or "-"),
-        _esc(note))
-    if not os.path.exists(LOG_PATH):
-        with open(LOG_PATH, "wb") as f:
-            f.write((RTF_HEADER + "}").encode("ascii"))
-    with open(LOG_PATH, "r+b") as f:
-        data = f.read()
-        pos = data.rfind(b"}")
-        f.seek(pos)
-        f.write(line.encode("ascii") + b"}")
-        f.truncate()
-
-
-def write_txt(ts, ok, scanned, screen, note=""):
+def write_txt(ts, ok, link):
+    """Eine Zeile pro Scan: genau der gescannte Text + RICHTIG/FALSCH."""
+    text = " ".join(link.split())
+    line = ("%s  " % ts if WRITE_TIMESTAMP else "") + \
+        "%s  -  %s\n" % (text, "RICHTIG" if ok else "FALSCH")
     with open(TXT_PATH, "a", encoding="utf-8") as f:
-        f.write("%s\t%s\tScan=%s\tBildschirm=%s\t%s\n" % (
-            ts, "OK" if ok else "FEHLER", scanned or "-", screen or "-", note))
+        f.write(line)
 
 
 # ---------------- Oberflaeche ----------------
@@ -271,7 +308,7 @@ class App(tk.Tk):
 
         f = tk.Frame(self, bg="#2b2b2b")
         f.pack(fill="x", padx=12, pady=8)
-        tk.Label(f, text="Teil des Fenstertitels des Programms:", fg="white",
+        tk.Label(f, text="Fenstertitel (leer lassen = automatisch nach Inhalt suchen):", fg="white",
                  bg="#2b2b2b").pack(anchor="w")
         self.title_var = tk.StringVar(value=WINDOW_TITLE_DEFAULT)
         tk.Entry(f, textvariable=self.title_var,
@@ -292,6 +329,8 @@ class App(tk.Tk):
                   command=self.refresh).pack(side="left")
         tk.Button(row, text="Gelesenen Text anzeigen",
                   command=self.debug).pack(side="left", padx=6)
+        row2 = tk.Frame(f, bg="#2b2b2b")
+        row2.pack(fill="x", pady=2)
         self.live = tk.BooleanVar(value=True)
         self.case = tk.BooleanVar(value=False)
         self.top = tk.BooleanVar(value=True)
@@ -299,7 +338,7 @@ class App(tk.Tk):
                 ("Live", self.live, None),
                 ("Groß-/Kleinschreibung beachten", self.case, None),
                 ("Immer im Vordergrund", self.top, self.set_top)):
-            tk.Checkbutton(row, text=txt, variable=var, command=cmd,
+            tk.Checkbutton(row2, text=txt, variable=var, command=cmd,
                            fg="white", bg="#2b2b2b", selectcolor="#444",
                            activebackground="#2b2b2b").pack(side="left", padx=6)
         self.set_top()
@@ -316,7 +355,10 @@ class App(tk.Tk):
         self.exp_lbl = tk.Label(self, text="Code auf dem Bildschirm: ---",
                                 fg="white", bg="#2b2b2b",
                                 font=("Consolas", 16))
-        self.exp_lbl.pack(pady=4)
+        self.exp_lbl.pack(pady=(4, 0))
+        self.found_lbl = tk.Label(self, text="Gefunden in: -", fg="#bbb",
+                                  bg="#2b2b2b", font=("Segoe UI", 9))
+        self.found_lbl.pack()
 
         tk.Label(self, text="Manuelle Eingabe / Test (Enter):", fg="#bbb",
                  bg="#2b2b2b").pack()
@@ -353,11 +395,12 @@ class App(tk.Tk):
     def set_top(self):
         self.attributes("-topmost", bool(self.top.get()))
 
-    def refresh(self):
-        txt = read_window_text(self.title_var.get().strip())
+    def refresh(self, force=False):
+        txt = read_window_text(self.title_var.get().strip(), force)
         self.screen_codes = find_codes(txt)
         shown = ", ".join(self.screen_codes.values()) or "nicht gefunden"
         self.exp_lbl.config(text="Code auf dem Bildschirm: %s" % shown)
+        self.found_lbl.config(text="Gefunden in: %s" % (FOUND["title"] or "-"))
 
     def tick(self):
         if self.live.get():
@@ -377,7 +420,7 @@ class App(tk.Tk):
         w.title("Aus dem Fenster gelesener Text")
         t = tk.Text(w, width=70, height=20)
         t.pack(fill="both", expand=True)
-        t.insert("1.0", read_window_text(self.title_var.get().strip())
+        t.insert("1.0", read_window_text(self.title_var.get().strip(), True)
                  or "(Nichts gelesen - Fenstertitel prüfen)")
 
     def show(self, ok, msg):
@@ -413,7 +456,7 @@ class App(tk.Tk):
 
     def process(self, link):
         """Ein gescannter Link: mit dem Code im Programmfenster vergleichen."""
-        self.refresh()
+        self.refresh(True)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         scanned = find_codes(link)
         if not scanned:
@@ -432,8 +475,7 @@ class App(tk.Tk):
                 ok, note = False, "(keine Übereinstimmung)"
                 self.show(False, "✖ KEINE Übereinstimmung!")
         try:
-            write_log(ts, ok, code, screen, note)
-            write_txt(ts, ok, code, screen, note)
+            write_txt(ts, ok, link)
         except Exception:
             pass
         self.add_row(ts, ok, code, screen, note)
