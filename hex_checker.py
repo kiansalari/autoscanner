@@ -153,14 +153,14 @@ class App(tk.Tk):
 
         f = tk.Frame(self, bg="#2b2b2b")
         f.pack(fill="x", padx=12, pady=8)
-        tk.Label(f, text="بخشی از عنوان پنجره‌ی برنامه:", fg="white",
+        tk.Label(f, text="Teil des Fenstertitels des Programms:", fg="white",
                  bg="#2b2b2b").pack(anchor="e")
         self.title_var = tk.StringVar(value=WINDOW_TITLE_DEFAULT)
         tk.Entry(f, textvariable=self.title_var,
                  font=("Segoe UI", 12)).pack(fill="x")
 
         if not IS_WIN:
-            tk.Label(f, text="[حالت تست مک] متن شبیه‌سازی پنجره:",
+            tk.Label(f, text="[Mac-Testmodus] Simulierter Fenstertext:",
                      fg="#ffcc00", bg="#2b2b2b").pack(anchor="e", pady=(8, 0))
             self.sim_var = tk.StringVar()
             tk.Entry(f, textvariable=self.sim_var,
@@ -170,23 +170,23 @@ class App(tk.Tk):
 
         row = tk.Frame(f, bg="#2b2b2b")
         row.pack(fill="x", pady=4)
-        tk.Button(row, text="به‌روزرسانی", command=self.refresh).pack(side="left")
-        tk.Button(row, text="نمایش متن خوانده‌شده",
+        tk.Button(row, text="Aktualisieren", command=self.refresh).pack(side="left")
+        tk.Button(row, text="Gelesenen Text anzeigen",
                   command=self.debug).pack(side="left", padx=6)
         self.live = tk.BooleanVar(value=True)
-        tk.Checkbutton(row, text="زنده", variable=self.live, fg="white",
+        tk.Checkbutton(row, text="Live", variable=self.live, fg="white",
                        bg="#2b2b2b", selectcolor="#444",
                        activebackground="#2b2b2b").pack(side="left", padx=6)
         self.case = tk.BooleanVar(value=False)
-        tk.Checkbutton(row, text="حساس به بزرگی/کوچکی حروف", variable=self.case,
+        tk.Checkbutton(row, text="Groß-/Kleinschreibung beachten", variable=self.case,
                        fg="white", bg="#2b2b2b", selectcolor="#444",
                        activebackground="#2b2b2b").pack(side="left", padx=6)
 
-        self.exp_lbl = tk.Label(self, text="کد روی صفحه: ---", fg="white",
+        self.exp_lbl = tk.Label(self, text="Code auf dem Bildschirm: ---", fg="white",
                                 bg="#2b2b2b", font=("Consolas", 16))
         self.exp_lbl.pack(pady=6)
 
-        tk.Label(self, text="لینک اسکن‌شده (اسکنر Enter می‌زند):", fg="white",
+        tk.Label(self, text="Gescannter Link (Scanner sendet Enter):", fg="white",
                  bg="#2b2b2b").pack()
         self.scan_var = tk.StringVar()
         self.scan = tk.Entry(self, textvariable=self.scan_var,
@@ -195,7 +195,7 @@ class App(tk.Tk):
         self.scan.bind("<Return>", self.on_scan)
         self.scan.focus_set()
 
-        self.banner = tk.Label(self, text="منتظر اسکن...", fg="white",
+        self.banner = tk.Label(self, text="Warte auf Scan...", fg="white",
                                bg="#555", font=("Segoe UI", 28, "bold"))
         self.banner.pack(fill="both", expand=True, padx=12, pady=12)
         self.after(500, self.tick)
@@ -203,8 +203,8 @@ class App(tk.Tk):
     def refresh(self):
         txt = read_window_text(self.title_var.get().strip())
         self.screen_codes = find_codes(txt)
-        shown = ", ".join(self.screen_codes.values()) or "پیدا نشد"
-        self.exp_lbl.config(text="کد روی صفحه: %s" % shown)
+        shown = ", ".join(self.screen_codes.values()) or "nicht gefunden"
+        self.exp_lbl.config(text="Code auf dem Bildschirm: %s" % shown)
 
     def tick(self):
         if self.live.get():
@@ -213,11 +213,11 @@ class App(tk.Tk):
 
     def debug(self):
         w = tk.Toplevel(self)
-        w.title("متن خوانده‌شده از پنجره")
+        w.title("Aus dem Fenster gelesener Text")
         t = tk.Text(w, width=70, height=20)
         t.pack(fill="both", expand=True)
         t.insert("1.0", read_window_text(self.title_var.get().strip())
-                 or "(چیزی خوانده نشد - عنوان پنجره را بررسی کنید)")
+                 or "(Nichts gelesen - Fenstertitel prüfen)")
 
     def show(self, ok, msg):
         c = "#1e9e3a" if ok else "#c62828"
@@ -237,19 +237,19 @@ class App(tk.Tk):
         self.refresh()
         scanned = find_codes(link)
         if not scanned:
-            self.show(False, "✖ کدی در لینک پیدا نشد")
+            self.show(False, "✖ Kein Code im Link gefunden")
             write_log(False, link[:60], None, "(no code in link)")
         else:
             name, code = next(iter(scanned.items()))
             screen = self.screen_codes.get(name)
             if not screen:
-                self.show(False, "✖ کدی در پنجره پیدا نشد")
+                self.show(False, "✖ Kein Code im Fenster gefunden")
                 write_log(False, code, None, "(no code on screen)")
             elif self.same(code, screen):
-                self.show(True, "✔ تطابق موفق")
+                self.show(True, "✔ Übereinstimmung")
                 write_log(True, code, screen)
             else:
-                self.show(False, "✖ عدم تطابق!")
+                self.show(False, "✖ KEINE Übereinstimmung!")
                 write_log(False, code, screen, "(mismatch)")
         self.scan.focus_set()
 
